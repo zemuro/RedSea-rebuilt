@@ -48,6 +48,13 @@
 
 ## Обвязка прошивки
 
+**Сделано для RED SEA:** `testfw/redsea_test.h` (подключается `-include`: хуки, подмена `digitalRead`)
+и `testfw/redsea_test_impl.h` (подключается в конец `REDSEA.ino`, видит `state`). Команды: `ping`,
+`state`, `stats [reset]`, `events`, `set <имя> <знач>`, `param`, `step`, `virt`, `press/release
+play|tap|page|enc`, `enc <переходы>`, `screen`, `i2c <n>`, `rxlog`, `txlog` (исходящие сообщения с
+номером такта, по 40 за запрос), `nvs`, `reboot`, `factory` (стереть настройки RED SEA).
+Python: `esptest/redsea.py` (оператор), фикстура `rs` в `conftest.py`. Ниже — исходные заметки.
+
 Тестовая сборка — отдельное окружение PlatformIO; в обычной сборке ничего из обвязки не компилируется.
 В ESPidi это выглядело так:
 

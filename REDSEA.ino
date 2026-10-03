@@ -491,16 +491,25 @@ void midiNoteToString(uint8_t note, char* out) {
 void sendCC(uint8_t cc, uint8_t val) {
   if (state.bypassMode == BypassMode::BYPASS) return;
   uint8_t status = 0xB0 | ((state.midiChannel - 1) & 0x0F);
+#ifdef REDSEA_TEST
+  th_logTx(status, cc & 0x7F, val & 0x7F);
+#endif
   midi.write(status); midi.write(cc & 0x7F); midi.write(val & 0x7F);
 }
 void sendNoteOn(uint8_t note, uint8_t vel) {
   if (state.bypassMode == BypassMode::BYPASS) return;
   uint8_t status = 0x90 | ((state.midiChannel - 1) & 0x0F);
+#ifdef REDSEA_TEST
+  th_logTx(status, note & 0x7F, vel & 0x7F);
+#endif
   midi.write(status); midi.write(note & 0x7F); midi.write(vel & 0x7F);
 }
 void sendNoteOff(uint8_t note) {
   if (state.bypassMode == BypassMode::BYPASS) return;
   uint8_t status = 0x80 | ((state.midiChannel - 1) & 0x0F);
+#ifdef REDSEA_TEST
+  th_logTx(status, note & 0x7F, 0 & 0x7F);
+#endif
   midi.write(status); midi.write(note & 0x7F); midi.write(0);
 }
 
@@ -926,6 +935,9 @@ bool generateInternalTicks() {
   float tickPeriodUs = (60.0f / bpm) * 1000000.0f / 24.0f;
   uint32_t period = (uint32_t)tickPeriodUs;
   if (now - lastInternalTickMicros >= period) {
+#ifdef REDSEA_TEST
+    th_tickLate(now - lastInternalTickMicros - period);
+#endif
     lastInternalTickMicros += period;
     return true;
   }
@@ -1126,9 +1138,15 @@ void handleIncomingCC(uint8_t cc, uint8_t val) {
 }
 
 void processMIDI() {
+#ifdef REDSEA_TEST
+  th_serviceMark();
+#endif
   uint8_t count = 0;
   while (midi.available() && count < 64) {
     uint8_t data = midi.read();
+#ifdef REDSEA_TEST
+    th_logRx(data);
+#endif
     count++;
     // FREEZE не про MIDI-thru, а про заморозку параметров и
     // зацикливание шага секвенсора — входящий поток всегда
@@ -3040,6 +3058,9 @@ void drawSequencerSetup(bool bypass) {
 // 13. ОБНОВЛЕНИЕ ДИСПЛЕЯ
 // ============================================================
 void updateDisplay() {
+#ifdef REDSEA_TEST
+  TH_SCOPE("display");
+#endif
   bool bypass = (state.bypassMode == BypassMode::FREEZE);
 
   if (state.bypassTransition) {
@@ -3231,6 +3252,9 @@ void loadSettings() {
 }
 
 void saveSequencerSettings() {
+#ifdef REDSEA_TEST
+  TH_SCOPE("seqsave");
+#endif
   storage.begin("redsea", false);
   storage.putUChar("seqSteps", state.sequencerSteps);
   storage.putUChar("seqBPM", state.sequencerBPM);
@@ -3244,6 +3268,9 @@ void saveSequencerSettings() {
 // 15. SETUP & LOOP
 // ============================================================
 void setup() {
+#ifdef REDSEA_TEST
+  th_setup();
+#endif
   pinMode(Pins::PLAY, INPUT_PULLUP);
   pinMode(Pins::TAP, INPUT_PULLUP);
   pinMode(Pins::PAGE, INPUT_PULLUP);
@@ -3276,6 +3303,10 @@ void setup() {
 }
 
 void loop() {
+#ifdef REDSEA_TEST
+  th_loopBegin();
+  th_poll();
+#endif
   processMIDI();
   updateButtons();
   handleEncoder();
@@ -3384,6 +3415,9 @@ void loop() {
   if (now - state.lastSaveTime > 2000) {
     bool needSave = state.needSaveMinMax || state.needSaveCC || state.needSaveStorm || state.needSaveGlobal;
     if (needSave) {
+#ifdef REDSEA_TEST
+      TH_SCOPE("save");
+#endif
       storage.begin("redsea", false);
       if (state.needSaveMinMax) {
         for (uint8_t i = 0; i < NUM_PARAMS; i++) {
@@ -3440,3 +3474,7 @@ void loop() {
     lastSequencerSave = now;
   }
 }
+
+#ifdef REDSEA_TEST
+#include "testfw/redsea_test_impl.h"
+#endif

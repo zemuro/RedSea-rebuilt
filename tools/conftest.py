@@ -16,7 +16,7 @@ import pytest
 
 from esptest import analysis, thresholds
 from esptest.console import Console, DeviceError, find_serial_port
-from esptest.dut import Dut
+from esptest.redsea import RedSea
 from esptest.midi import Midi, find_ports, probe_ports
 
 for _s in (sys.stdout, sys.stderr):
@@ -26,17 +26,19 @@ for _s in (sys.stdout, sys.stderr):
         pass
 
 ROOT = Path(__file__).resolve().parent
+# Образцы тестов ESPidi — не для этого устройства
+collect_ignore = ["reference"]
 REPO = ROOT.parent
 PIO = Path.home() / ".platformio" / "penv" / "Scripts" / "pio.exe"
 
 
 def pytest_addoption(parser):
-    g = parser.getgroup("espidi")
+    g = parser.getgroup("redsea")
     g.addoption("--serial", default=os.environ.get("ESPIDI_SERIAL"), help="COM-порт устройства")
     g.addoption("--midi-in", default=os.environ.get("ESPIDI_MIDI_IN"),
-                help="подстрока имени MIDI-порта ПК-ВХОДА (куда пишет MIDI OUT ESPidi)")
+                help="подстрока имени MIDI-порта ПК-ВХОДА (куда пишет MIDI OUT устройства)")
     g.addoption("--midi-out", default=os.environ.get("ESPIDI_MIDI_OUT"),
-                help="подстрока имени MIDI-порта ПК-ВЫХОДА (в MIDI IN ESPidi)")
+                help="подстрока имени MIDI-порта ПК-ВЫХОДА (в MIDI IN устройства)")
     g.addoption("--flash", action="store_true", help="собрать и залить окружение `test` перед прогоном")
     g.addoption("--long", action="store_true", help="длинные прогоны (в 6 раз дольше)")
     g.addoption("--allow-wipe", action="store_true",
@@ -107,10 +109,17 @@ def midi(request):
 
 
 @pytest.fixture
-def dut(console, midi):
-    d = Dut(console, midi)
-    d.reset()
-    yield d
+def rs(console, midi):
+    """RED SEA с настройками «из коробки» (NVS стёрт, перезагрузка) и пустыми журналами."""
+    r = RedSea(console, midi)
+    r.fresh()
+    midi.clear()
+    yield r
+    for b in ("play", "tap", "page", "enc"):
+        try:
+            console.release(b)
+        except Exception:
+            pass
 
 
 @pytest.fixture(scope="session")
@@ -127,23 +136,6 @@ def rec(request):
     def _rec(key, value):
         request.node.user_properties.append((key, value))
     return _rec
-
-
-@pytest.fixture(scope="session")
-def noise_floor(console, midi):
-    """Шумовой пол стенда: джиттер Clock в простое (внутренний темп 120, CLKOUT ON, ничего не играет)."""
-    d = Dut(console, midi)
-    d.reset()
-    d.settings(clkout=True)
-    d.settle(200, 3)
-    console.stats_reset()
-    msgs = midi.capture(6.0)
-    times = analysis.clock_times(msgs)
-    if len(times) < 50:
-        pytest.skip("Clock не принят на ПК: проверьте кабель MIDI OUT → ПК и порт --midi-in")
-    j = analysis.jitter(times, 120)
-    d.reset()
-    return j
 
 
 RESULTS: list[dict] = []
@@ -175,7 +167,7 @@ def pytest_runtest_makereport(item, call):
                             msg=msg, props=[(k, v) for k, v in item.user_properties]))
 
 
-_LABEL = {"DEFECT": "✔ ДЕФЕКТ подтверждён", "OK": "✘ не воспроизведено", "UNCLEAR": "≈ поведение — уточнить у Евгения",
+_LABEL = {"DEFECT": "✔ ДЕФЕКТ подтверждён", "OK": "✘ не воспроизведено", "UNCLEAR": "≈ поведение — уточнить у Даниила",
           "SKIP": "— пропущен", "ERROR": "! ошибка стенда"}
 
 
