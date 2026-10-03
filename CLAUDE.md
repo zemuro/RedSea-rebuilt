@@ -23,10 +23,7 @@
 ## Репозиторий
 - `upstream` — репозиторий автора. Ветка `main` — его код как есть, **не трогать**.
 - `rebuilt` — наша рабочая ветка: `platformio.ini`, стенд `tools/`, документы `docs/`, позже — исправления.
-- **Следующий шаг: форк.** `gh repo fork Cirocular-Vlasenko-Daniil/Red-Sea --clone=false --fork-name RedSea-rebuilt`
-  (от имени `zemuro`), затем `git remote add origin https://github.com/zemuro/RedSea-rebuilt.git`,
-  `git push -u origin main rebuilt`, сделать `rebuilt` веткой по умолчанию
-  (`gh repo edit zemuro/RedSea-rebuilt --default-branch rebuilt`). Подтвердить с пользователем, будет ли форк публичным.
+- `origin` — публичный форк github.com/zemuro/RedSea-rebuilt (создан 2026-10-04), ветка по умолчанию — `rebuilt`.
 
 ## Сборка
 - Каноническая сборка — PlatformIO (`platformio.ini` в корне; код автора собирается из корня,
