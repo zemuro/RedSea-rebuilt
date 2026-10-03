@@ -124,7 +124,8 @@ class Console:
             slot["ev"].set()
 
     # ------------------------------------------------------------ команды
-    _IDEMPOTENT = {"ping", "state", "stats", "screen", "eeprom", "seqdump", "songdump", "load", "rxlog", "fs"}
+    _IDEMPOTENT = {"ping", "state", "stats", "screen", "eeprom", "seqdump", "songdump", "load", "rxlog", "fs",
+                   "set", "param", "step", "render", "nvs", "prof"}
 
     def cmd(self, name: str, *args, timeout: float | None = None) -> dict:
         try:
@@ -271,7 +272,7 @@ class Console:
         except DeviceError:
             pass
         self.close()
-        time.sleep(1.0)
+        time.sleep(2.5)  # раньше pyserial на Windows иногда падает (access violation), пока USB определяется
         deadline = time.time() + wait
         last = None
         attempt = 0

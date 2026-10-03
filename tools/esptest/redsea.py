@@ -41,12 +41,13 @@ class RedSea:
 
     # ------------------------------------------------------------ подготовка
     def fresh(self):
-        """Стереть настройки RED SEA и перезагрузиться: умолчания прошивки «из коробки»."""
-        self.con.reboot(factory=True)
-        time.sleep(0.3)
-        self.con.cmd("txlog", "clear")
-        self.con.cmd("rxlog", "clear")
-        self.con.stats_reset()
+        """Настройки «из коробки»: NVS RED SEA стёрт, состояние — как после включения.
+        Без перезагрузки (команда `fresh` обвязки): переподключение USB иногда роняет pyserial."""
+        for b in ("play", "tap", "page", "enc"):
+            self.con.release(b)
+        time.sleep(0.1)
+        self.con.cmd("fresh", timeout=8)
+        time.sleep(0.2)
 
     def set(self, **kw):
         for k, v in kw.items():

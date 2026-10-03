@@ -316,6 +316,12 @@ static void cmdSet(uint32_t id, const char* k, const char* vs) {
     else if (!strcmp(k, "shape")) state.lfoShape = v;
     else if (!strcmp(k, "phase")) state.lfoPhase = v;
     else if (!strcmp(k, "glide")) state.lfoGlide = v;
+    else if (!strcmp(k, "bypass")) state.bypassMode = (BypassMode)v;  // только вид, без заморозки
+    else if (!strcmp(k, "frozen")) setSnowTargetFrozen(v / 10, v % 10);  // frozen <цель*10 + 0|1>
+    else if (!strcmp(k, "animtime")) state.animationTimeOffset = millis() - (uint32_t)atol(vs);  // «проработал N мс»
+    else if (!strcmp(k, "strike")) state.rainStrikeActive = v;  // вспышка молнии RAIN
+    else if (!strcmp(k, "pulse")) state.snowPulseActive = v;    // вспышка снежинки SNOW
+    else if (!strcmp(k, "learn")) state.midiLearnActive = v;    // плашка MIDI Learn
     else if (!strcmp(k, "run")) state.sequencerRunning = v;
     else if (!strcmp(k, "midirun")) state.midiRunning = v;
     else return thErr(id, "unknown name");
@@ -424,6 +430,134 @@ static void cmdNvs(uint32_t id) {
     thReply(id, s);
 }
 
+// ---------------------------------------------------------------- кадры: эталон и профиль
+
+// Прямая работа с шиной экрана в обход задачи передачи (если она есть) — только когда та свободна.
+static void thDisplaySync() {
+#ifdef REDSEA_DISPLAY_ASYNC
+    display.waitIdle();
+#endif
+}
+
+static uint32_t thFnv(const uint8_t* b, size_t n) {
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; i < n; i++) h = (h ^ b[i]) * 16777619u;
+    return h;
+}
+
+// render <t0> <dt> <n> [trans <dir>] — нарисовать n кадров текущей страницы с фиксированным временем
+// анимации t0 + k*dt и зерном random() = 1000 + k; ответ — контрольные суммы буфера и время
+// updateDisplay() (с передачей по I²C). С `trans` рисуется анимация перехода BYPASS/FREEZE,
+// t0 + k*dt — сколько миллисекунд прошло от её начала. По совпадению сумм до и после правки
+// проверяется, что картинка не изменилась.
+static void cmdRender(uint32_t id, char** a) {
+    if (!a[2]) return thErr(id, "render <t0> <dt> <n> [trans <dir>]");
+    uint32_t t0 = atol(a[0]), dt = atol(a[1]);
+    int n = atoi(a[2]);
+    if (n > 40) n = 40;
+    bool trans = a[3] && !strcmp(a[3], "trans");
+    bool pausedWas = state.animationPaused;
+    uint32_t frozenWas = state.frozenAnimTime;
+    String s;
+    s.reserve(800);
+    s = "{\"crc\":[";
+    String us = "],\"us\":[";
+    for (int k = 0; k < n; k++) {
+        uint32_t t = t0 + k * dt;
+        randomSeed(1000 + k);
+        state.animationPaused = true;
+        state.frozenAnimTime = t;
+        state.displayDirty = true;
+        if (trans) {
+            state.bypassTransition = true;
+            state.transitionDirection = a[4] && atoi(a[4]);
+            state.transitionStart = millis() - t;
+        }
+        uint32_t c0 = micros();
+        updateDisplay();
+        uint32_t c1 = micros();
+        state.bypassTransition = false;
+        jf(s, "%s\"%08x\"", k ? "," : "", (unsigned)thFnv(display.getBuffer(), Display::W * Display::H / 8));
+        jf(us, "%s%u", k ? "," : "", (unsigned)(c1 - c0));
+    }
+    state.animationPaused = pausedWas;
+    state.frozenAnimTime = frozenWas;
+    state.displayDirty = true;
+    s += us;
+    s += "]}";
+    thReply(id, s);
+}
+
+// prof <n> — средняя и максимальная длительность частей кадра текущей страницы (мкс), n повторов.
+static void cmdProf(uint32_t id, const char* an) {
+    int n = an ? atoi(an) : 20;
+    bool bypass = (state.bypassMode == BypassMode::FREEZE);
+    uint8_t amt = state.chaos;
+    struct Part { const char* name; uint32_t sum, max; } parts[] = {
+        {"fill", 0, 0}, {"sea", 0, 0}, {"weather", 0, 0}, {"header", 0, 0}, {"boat", 0, 0},
+        {"columns", 0, 0}, {"frame", 0, 0}, {"i2c", 0, 0}};
+    auto add = [&](int i, uint32_t d) { parts[i].sum += d; if (d > parts[i].max) parts[i].max = d; };
+    for (int k = 0; k < n; k++) {
+        uint32_t t = getAnimTime(), c;
+        c = micros(); display.fillScreen(bypass ? SSD1306_WHITE : SSD1306_BLACK); add(0, micros() - c);
+        c = micros(); drawSeaLines(t, amt, bypass); add(1, micros() - c);
+        c = micros(); drawWeather(t, amt, bypass); add(2, micros() - c);
+        c = micros(); drawHeader(state.currentPage, state.selectedParam, bypass); add(3, micros() - c);
+        c = micros(); drawSailboat(64, 0, t, amt, bypass); add(4, micros() - c);
+        c = micros();
+        for (uint8_t i = 0; i < NUM_PARAMS; i++)
+            drawColumn(i * 32, state.params[i].value, state.selectedParam == i, t, amt, bypass, state.frozen[i]);
+        add(5, micros() - c);
+        state.displayDirty = true;
+        c = micros(); updateDisplay(); add(6, micros() - c);
+        thDisplaySync();
+        c = micros(); display.display(); add(7, micros() - c);
+        delay(5);
+    }
+    String s = "{";
+    for (int i = 0; i < 8; i++)
+        jf(s, "%s\"%s\":[%u,%u]", i ? "," : "", parts[i].name, (unsigned)(parts[i].sum / (n ? n : 1)),
+           (unsigned)parts[i].max);
+    s += "}";
+    thReply(id, s);
+}
+
+// i2cbg — свободен ли процессор, пока кадр уходит по I²C. Отдельная задача (приоритет выше loop)
+// отправляет кадр, а текущая задача тем временем крутит счётчик. Сравниваем с тем же счётчиком
+// за то же время без передачи: доля = сколько процессорного времени достаётся остальному коду.
+static volatile bool s_bgDone = false;
+static void thBgSend(void*) {
+    display.display();
+    s_bgDone = true;
+    vTaskDelete(nullptr);
+}
+
+static void thBgSleep(void*) {
+    vTaskDelay(pdMS_TO_TICKS(12));
+    s_bgDone = true;
+    vTaskDelete(nullptr);
+}
+
+static void cmdI2cBg(uint32_t id) {
+    // Тот же цикл ожидания флага: сначала задача просто спит 12 мс, потом — отправляет кадр.
+    thDisplaySync();
+    volatile uint32_t idle = 0, busy = 0;
+    s_bgDone = false;
+    uint32_t t0 = micros();
+    xTaskCreate(thBgSleep, "bgsleep", 2048, nullptr, 2, nullptr);
+    while (!s_bgDone) idle++;
+    uint32_t idleDur = micros() - t0;
+    s_bgDone = false;
+    t0 = micros();
+    xTaskCreate(thBgSend, "bgsend", 4096, nullptr, 2, nullptr);
+    while (!s_bgDone) busy++;
+    uint32_t dur = micros() - t0;
+    String s;
+    jf(s, "{\"send_us\":%u,\"idle_per_ms\":%u,\"busy_per_ms\":%u}", (unsigned)dur, (unsigned)(idleDur ? (uint64_t)idle * 1000 / idleDur : 0),
+       (unsigned)(dur ? (uint64_t)busy * 1000 / dur : 0));
+    thReply(id, s);
+}
+
 static void execLine(char* line) {
     char* tok[10] = {nullptr};
     int n = 0;
@@ -494,6 +628,7 @@ static void execLine(char* line) {
     if (!strcmp(cmd, "i2c")) {  // i2c <n>: среднее и максимум времени display.display()
         int cnt = a[0] ? atoi(a[0]) : 10;
         uint32_t sum = 0, mx = 0;
+        thDisplaySync();
         for (int i = 0; i < cnt; i++) {
             uint32_t t0 = micros();
             display.display();
@@ -505,9 +640,39 @@ static void execLine(char* line) {
         jf(s, "{\"n\":%d,\"avg\":%u,\"max\":%u}", cnt, (unsigned)(cnt ? sum / cnt : 0), (unsigned)mx);
         return thReply(id, s);
     }
+    if (!strcmp(cmd, "render")) return cmdRender(id, a);
+    if (!strcmp(cmd, "prof")) return cmdProf(id, a[0]);
+    if (!strcmp(cmd, "i2cbg")) return cmdI2cBg(id);
     if (!strcmp(cmd, "rxlog")) return cmdRxlog(id, a[0]);
     if (!strcmp(cmd, "txlog")) return cmdTxlog(id, a[0]);
     if (!strcmp(cmd, "nvs")) return cmdNvs(id);
+    if (!strcmp(cmd, "fresh")) {
+        // «Как после стирания и включения», но без перезагрузки: переподключение USB при
+        // перезагрузке иногда роняет pyserial на Windows. Состояние — начальные значения
+        // State, затем loadSettings() из пустого NVS, как в setup().
+        thDisplaySync();
+        Preferences p;
+        p.begin("redsea", false);
+        p.clear();
+        p.end();
+        state = State();
+        lastInternalTickMicros = 0;
+        midiRunningStatus = 0;
+        midiParseHaveFirstData = false;
+        noInterrupts();
+        encoderTicks = 0;
+        interrupts();
+        for (auto& b : buttons) { b.lastStable = HIGH; b.raw = HIGH; b.lastChange = millis(); b.processed = false; }
+        while (midi.available()) midi.read();
+        loadSettings();
+        for (uint8_t i = 0; i < 8; i++) state.frozenBackup[i] = getSnowTargetFrozen(i);
+        s_txHead = s_txCount = 0;
+        s_txTotal = 0;
+        s_rxHead = s_rxCount = 0;
+        s_rxTotal = 0;
+        thStatsReset();
+        return thReply(id, "{\"ok\":1}");
+    }
     if (!strcmp(cmd, "reboot") || !strcmp(cmd, "factory")) {
         if (!strcmp(cmd, "factory")) {  // стереть настройки RED SEA и перезагрузиться
             Preferences p;

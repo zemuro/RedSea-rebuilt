@@ -83,11 +83,18 @@ def test_rain_after_stop_start(rs, midi, rec):
     assert len(cc) >= 16, f"за 48 тактов после повторного Start RAIN отправил {len(cc)} CC (ожидалось ~32)"
 
 
+# Время анимации: сразу после включения и «через 10 минут работы». От него зависит цена кадра:
+# примерно через 3 минуты аргументы sinf() в анимациях становятся большими, и sinf переходит
+# на медленную ветку (кадр MAIN дорожает с ~6 до ~32 мс).
+UPTIME = {"boot": 5_000, "10min": 600_000}
+
+
 @pytest.mark.tid("Г1", "P0")
+@pytest.mark.parametrize("uptime", list(UPTIME))
 @pytest.mark.parametrize("bpm", [120, 240])
-def test_internal_clock_timing(rs, rec, bpm):
+def test_internal_clock_timing(rs, rec, bpm, uptime):
     """Внутренний Clock: опоздание такта < 3 мс и точный темп при работающей графике."""
-    rs.set(bpm=bpm, weather=0, chaos=50, arm=1)  # FOG: CC на каждом такте
+    rs.set(bpm=bpm, weather=0, chaos=50, arm=1, animtime=UPTIME[uptime])  # FOG: CC на каждом такте
     rs.page("main")
     rs.double("tap")
     time.sleep(1.0)
@@ -114,7 +121,7 @@ def test_internal_clock_timing(rs, rec, bpm):
 @pytest.mark.tid("Г1", "P1")
 def test_internal_clock_during_freeze_transition(rs, rec):
     """Анимация перехода BYPASS/FREEZE не должна задерживать такты."""
-    rs.set(bpm=120, weather=0, chaos=50, arm=1)
+    rs.set(bpm=120, weather=0, chaos=50, arm=1, animtime=UPTIME["boot"])
     rs.page("main")
     rs.double("tap")
     time.sleep(1.0)
@@ -132,9 +139,10 @@ def test_internal_clock_during_freeze_transition(rs, rec):
 
 
 @pytest.mark.tid("Г2", "P0")
-def test_external_clock_service_gap(rs, midi, rec):
+@pytest.mark.parametrize("uptime", list(UPTIME))
+def test_external_clock_service_gap(rs, midi, rec, uptime):
     """Внешний Clock: вход MIDI обслуживается не реже раза в 5 мс (иначе такты ждут в буфере UART)."""
-    rs.set(weather=0, chaos=50, arm=1)
+    rs.set(weather=0, chaos=50, arm=1, animtime=UPTIME[uptime])
     rs.page("main")
     clk = RealtimeClock(midi, 120)
     clk.start(send_start=True)
