@@ -125,7 +125,7 @@ class Console:
 
     # ------------------------------------------------------------ команды
     _IDEMPOTENT = {"ping", "state", "stats", "screen", "eeprom", "seqdump", "songdump", "load", "rxlog", "fs",
-                   "set", "param", "step", "render", "nvs", "prof"}
+                   "set", "param", "step", "render", "nvs", "prof", "txlog"}
 
     def cmd(self, name: str, *args, timeout: float | None = None) -> dict:
         try:

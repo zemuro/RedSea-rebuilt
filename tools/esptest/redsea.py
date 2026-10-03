@@ -106,11 +106,13 @@ class RedSea:
 
     # ------------------------------------------------------------ журналы и метрики
     def txlog(self) -> list[Tx]:
-        out = []
+        """Все исходящие сообщения с последней очистки (журнал прошивки, до 512 последних)."""
+        out, frm = [], 0
         while True:
-            r = self.con.cmd("txlog")
+            r = self.con.cmd("txlog", frm)
             out += [Tx(*m) for m in r["m"]]
-            if not r["left"]:
+            frm = r["from"] + len(r["m"])
+            if frm >= r["total"] or not r["m"]:
                 return out
 
     def txlog_clear(self):

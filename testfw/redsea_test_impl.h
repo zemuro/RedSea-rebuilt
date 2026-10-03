@@ -362,24 +362,28 @@ static void cmdStep(uint32_t id, char** a) {
     thReply(id, s);
 }
 
+// txlog [<с номера>] | txlog clear — исходящие сообщения по порядковым номерам (с 0 после clear),
+// не больше 40 за запрос (ответ ~1,2 КБ). Чтение ничего не удаляет, поэтому запрос можно
+// безопасно повторить, если ответ потерялся.
 static void cmdTxlog(uint32_t id, const char* a1) {
     if (a1 && !strcmp(a1, "clear")) {
         s_txHead = s_txCount = 0;
         s_txTotal = 0;
         return thReply(id, "{\"ok\":1}");
     }
-    // По 40 записей за запрос (ответ ~1,2 КБ), начиная с самой старой; прочитанные удаляются.
-    uint16_t n = s_txCount > 40 ? 40 : s_txCount;
-    uint16_t start = (s_txHead + 512 - s_txCount) % 512;
+    uint32_t first = s_txTotal - s_txCount;  // номер самой старой записи в кольце
+    uint32_t from = a1 ? (uint32_t)atol(a1) : first;
+    if (from < first) from = first;
+    uint32_t n = s_txTotal > from ? s_txTotal - from : 0;
+    if (n > 40) n = 40;
     String s;
-    s.reserve(3200);
-    jf(s, "{\"total\":%u,\"left\":%u,\"m\":[", (unsigned)s_txTotal, (unsigned)(s_txCount - n));
-    for (uint16_t i = 0; i < n; i++) {
-        const ThTx& e = s_tx[(start + i) % 512];
+    s.reserve(1400);
+    jf(s, "{\"total\":%u,\"from\":%u,\"m\":[", (unsigned)s_txTotal, (unsigned)from);
+    for (uint32_t i = 0; i < n; i++) {
+        const ThTx& e = s_tx[(s_txHead + 512 - (s_txTotal - from - i)) % 512];
         jf(s, "%s[%u,%u,%u,%u,%u]", i ? "," : "", (unsigned)e.t, (unsigned)e.tick, e.s, e.d1, e.d2);
     }
     s += "]}";
-    s_txCount -= n;
     thReply(id, s);
 }
 
