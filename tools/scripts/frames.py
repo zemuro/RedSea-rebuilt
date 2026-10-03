@@ -2,6 +2,7 @@
 
     python scripts/frames.py record frames_author.json   # на прошивке автора (окружение test)
     python scripts/frames.py check  frames_author.json   # на изменённой прошивке
+    python scripts/frames.py record late.json 600000     # время анимации от 10 минут работы
 
 Прошивка рисует кадры с фиксированным временем анимации и зерном random() (команда `render`)
 и возвращает контрольную сумму буфера SSD1306. Сценарии — все страницы и подстраницы, четыре
@@ -53,7 +54,7 @@ def prepare(rs: RedSea):
            rot=2, frz=70, time=-20, lfotype=1, shape=40, phase=-30, glide=50, bpm=133, steps=12, seqcc=21)
 
 
-def run(rs: RedSea):
+def run(rs: RedSea, t0=T0):
     out, timing = {}, {}
     for sc in scenarios():
         sc = dict(sc)
@@ -63,7 +64,7 @@ def run(rs: RedSea):
         rs.set(**sc)
         key = f"{page}{sub} " + " ".join(f"{k}={v}" for k, v in sc.items())
         if trans is None:
-            r = rs.con.cmd("render", T0, DT, N, timeout=10)
+            r = rs.con.cmd("render", t0, DT, N, timeout=10)
         else:
             key += f" trans={trans}"
             r = rs.con.cmd("render", 0, 10, 15, "trans", trans, timeout=10)
@@ -82,7 +83,7 @@ def main():
     rs.fresh()
     prepare(rs)
     t = time.time()
-    frames, timing = run(rs)
+    frames, timing = run(rs, int(sys.argv[3]) if len(sys.argv) > 3 else T0)
     con.virt(False)
     con.close()
     n = sum(len(v) for v in frames.values())
@@ -98,7 +99,7 @@ def main():
     bad = [(k, i) for k, v in ref.items() for i, (a, b) in enumerate(zip(v, frames.get(k, []))) if a != b]
     missing = [k for k in ref if k not in frames]
     if bad or missing:
-        print(f"РАЗЛИЧИЯ: {len(bad)} кадров, нет сценариев: {len(missing)}")
+        print(f"РАЗЛИЧИЯ: {len(bad)} кадров из {sum(len(v) for v in ref.values())}, нет сценариев: {len(missing)}")
         for k, i in bad[:20]:
             print("  ", k, "кадр", i)
         sys.exit(1)
