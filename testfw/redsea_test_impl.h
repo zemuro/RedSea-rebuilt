@@ -782,7 +782,13 @@ void th_poll() {
         if (c == '\n' || c == '\r') {
             if (len) {
                 line[len] = 0;
+#ifdef REDSEA_ENGINE_TASK
+                engineLock();  // команды меняют общее с задачей движка состояние
                 execLine(line);
+                engineUnlock();
+#else
+                execLine(line);
+#endif
                 thSendReplies();
                 len = 0;
             }

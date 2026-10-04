@@ -119,3 +119,23 @@ def test_midi_learn_cancelled_by_any_button(rs, rec, btn):
     rec(f"ожидание MIDI Learn после {btn.upper()} / режим", f"{st['learn']} / {st['bypass']}")
     assert not st["learn"], f"{btn.upper()} не отменил ожидание MIDI Learn"
     assert st["bypass"] == 0, "отмена MIDI Learn кнопкой PLAY заодно включила BYPASS/FREEZE"
+
+
+@pytest.mark.tid("Д6", "P2")
+def test_settings_saved_after_stop_not_during_play(rs, rec):
+    """Пока идёт транспорт, настройки во флеш не пишутся (запись стопорит процессор);
+    после остановки изменения сохраняются."""
+    rs.set(arm=0, bpm=120)
+    rs.page("storm", sub=0, sel=0)    # AMT
+    rs.double("tap")                   # транспорт идёт
+    time.sleep(0.5)
+    for _ in range(5):
+        rs.enc(4)                      # AMT 0 -> 10
+    time.sleep(3.0)
+    during = rs.nvs()["keys"].get("chaos")
+    rs.double("tap")                   # стоп
+    time.sleep(3.0)
+    after = rs.nvs()["keys"].get("chaos")
+    rec("AMT в NVS: во время игры / после остановки", f"{during} / {after}")
+    assert during is None, f"во время игры настройка записана во флеш ({during})"
+    assert after == 10, f"после остановки в NVS AMT = {after}, а не 10"

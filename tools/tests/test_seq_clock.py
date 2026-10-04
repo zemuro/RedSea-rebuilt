@@ -238,3 +238,29 @@ def test_fog_lfo_sends_only_changes(rs, midi, rec):
     cc = [m for m in rs.txlog() if m.kind == "cc" and 20 <= m.d1 <= 23]
     rec("CC за 48 тактов при постоянном значении", len(cc))
     assert len(cc) <= 4, f"за 48 тактов отправлено {len(cc)} CC с неизменным значением"
+
+
+@pytest.mark.tid("В2", "P1")
+def test_clock_out_with_internal_tempo(rs, midi, rec):
+    """Внутренний темп: наружу уходят Start, Clock 24 на четверть в темпе и Stop; шаг 1 — вместе с первым Clock."""
+    rs.clear_steps()
+    rs.step(0, "1000", note=60)
+    rs.set(arm=0, bpm=120, steps=4, scale=0)
+    midi.clear()
+    rs.double("tap")
+    time.sleep(5.0)
+    rs.double("tap")
+    time.sleep(0.3)
+    msgs = midi.since(0)
+    kinds = [m.kind for m in msgs]
+    clocks = [m.t for m in msgs if m.kind == "clock"]
+    rec("Start / Clock / Stop", f"{kinds.count('start')} / {len(clocks)} / {kinds.count('stop')}")
+    assert kinds.count("start") == 1 and kinds.count("stop") == 1, f"Start {kinds.count('start')}, Stop {kinds.count('stop')}"
+    first = kinds.index("start")
+    after = [k for k in kinds[first + 1:] if k in ("clock", "note_on")][:2]
+    assert after == ["clock", "note_on"], f"после Start ожидались Clock и нота шага 1, а пришли {after}"
+    assert kinds.index("stop") > max(i for i, k in enumerate(kinds) if k == "clock"), "Clock после Stop"
+    iv = [(b - a) * 1000 for a, b in zip(clocks, clocks[1:])]
+    mean = sum(iv) / len(iv)
+    rec("интервал Clock на ПК, мс: среднее / мин / макс", f"{mean:.3f} / {min(iv):.1f} / {max(iv):.1f}")
+    assert abs(mean - 20.833) < 0.1, f"средний интервал Clock {mean:.3f} мс вместо 20,833"
