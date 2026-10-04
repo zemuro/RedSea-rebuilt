@@ -8,7 +8,8 @@ TC="$USERPROFILE/.platformio/packages/toolchain-riscv32-esp/bin"
 OD="$TC/riscv32-esp-elf-objdump"
 secs=$("$OD" -h "$1" | awk '$2 ~ /^\./ && $2 !~ /^\.(debug|comment|riscv)/ {print $2}')
 rc=0
-ha=$("$OD" -h "$1" | awk '$2 ~ /^./ {print $2,$3}'); hb=$("$OD" -h "$2" | awk '$2 ~ /^./ {print $2,$3}')
+sizes() { "$OD" -h "$1" | awk '$2 ~ /^\./ && $2 !~ /^\.(debug|comment|riscv)/ {print $2,$3}'; }
+ha=$(sizes "$1"); hb=$(sizes "$2")
 [ "$ha" = "$hb" ] || { echo "DIFF размеры секций"; rc=1; }
 for s in $secs; do
   a=$("$OD" -s -j "$s" "$1" 2>/dev/null | tail -n +4 | md5sum)
