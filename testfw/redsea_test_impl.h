@@ -9,6 +9,7 @@
 #include <stdarg.h>
 #include <nvs.h>
 #include <nvs_flash.h>
+#include <esp_partition.h>
 
 // ---------------------------------------------------------------- метрики
 
@@ -178,6 +179,10 @@ static void thReply(uint32_t id, const String& json) {
 
 static void thSendReplies() {
     if (!s_out.length()) return;
+    // HWCDC не отправляет хвост, если длина кратна размеру USB-пакета (64 байта): ответ
+    // застревал до следующего вывода, и стенд считал его потерянным. Лишний перевод строки
+    // сдвигает границу, клиент консоли пустые строки пропускает.
+    if (s_out.length() % 64 == 0) s_out += '\n';
     Serial.print(s_out);
     Serial.flush();  // HWCDC держит неполный 64-байтный пакет в FIFO — выталкиваем
     s_out = String();
@@ -563,6 +568,35 @@ static void cmdI2cBg(uint32_t id) {
     thReply(id, s);
 }
 
+static void cmdPins(uint32_t id, const char* a1);
+
+// nvsraw — физическое состояние раздела NVS прямо с флеша. Страница NVS = сектор 4 КБ:
+// заголовок (состояние, порядковый номер), битовая карта на 126 записей по 2 бита
+// (11 — пустая, 10 — записана, 00 — удалена), затем сами записи по 32 байта.
+// Записанные + удалённые = сколько записей физически израсходовано с последнего стирания
+// страницы; порядковый номер растёт при каждой новой активной странице (каждое стирание
+// и повторное использование сектора даёт новую страницу с большим номером).
+static void cmdNvsRaw(uint32_t id) {
+    const esp_partition_t* part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, nullptr);
+    if (!part) return thErr(id, "no nvs partition");
+    String s = "{\"pages\":[";
+    for (uint32_t off = 0; off < part->size; off += 4096) {
+        uint32_t hdr[2];
+        uint8_t bmp[32];
+        esp_partition_read(part, off, hdr, sizeof(hdr));
+        esp_partition_read(part, off + 32, bmp, sizeof(bmp));
+        unsigned written = 0, erased = 0;
+        for (int e = 0; e < 126; e++) {
+            uint8_t st = (bmp[e / 4] >> ((e % 4) * 2)) & 3;
+            if (st == 2) written++;
+            else if (st == 0) erased++;
+        }
+        jf(s, "%s[%u,%u,%u,%u]", off ? "," : "", (unsigned)hdr[0], (unsigned)hdr[1], written, erased);
+    }
+    s += "]}";
+    thReply(id, s);
+}
+
 static void execLine(char* line) {
     char* tok[10] = {nullptr};
     int n = 0;
@@ -648,6 +682,8 @@ static void execLine(char* line) {
     if (!strcmp(cmd, "render")) return cmdRender(id, a);
     if (!strcmp(cmd, "prof")) return cmdProf(id, a[0]);
     if (!strcmp(cmd, "i2cbg")) return cmdI2cBg(id);
+    if (!strcmp(cmd, "pins")) return cmdPins(id, a[0]);
+    if (!strcmp(cmd, "nvsraw")) return cmdNvsRaw(id);
     if (!strcmp(cmd, "rxlog")) return cmdRxlog(id, a[0]);
     if (!strcmp(cmd, "txlog")) return cmdTxlog(id, a[0]);
     if (!strcmp(cmd, "nvs")) return cmdNvs(id);
@@ -700,6 +736,35 @@ static void execLine(char* line) {
 
 // ---------------------------------------------------------------- жизненный цикл
 
+// Сырые переключения уровня на выводах кнопок (до антидребезга) — проверка железа:
+// нажали кнопку, а счётчик стоит — дело в пайке или кнопке, а не в прошивке.
+static const uint8_t TH_PINS[4] = {Pins::PLAY, Pins::TAP, Pins::PAGE, Pins::ENC_SW};
+static uint8_t s_pinLevel[4] = {1, 1, 1, 1};
+static uint32_t s_pinEdges[4] = {0};
+static uint32_t s_pinLowMs[4] = {0};
+
+static void thPollPins() {
+    for (int i = 0; i < 4; i++) {
+        uint8_t v = digitalRead(TH_PINS[i]);
+        if (v != s_pinLevel[i]) { s_pinEdges[i]++; s_pinLevel[i] = v; }
+        if (!v) s_pinLowMs[i]++;  // проходов цикла с уровнем LOW (~ время удержания)
+    }
+}
+
+static void cmdPins(uint32_t id, const char* a1) {
+    if (a1 && !strcmp(a1, "reset")) {
+        for (int i = 0; i < 4; i++) { s_pinEdges[i] = 0; s_pinLowMs[i] = 0; }
+        return thReply(id, "{\"ok\":1}");
+    }
+    static const char* names[4] = {"play", "tap", "page", "enc"};
+    String s = "{";
+    for (int i = 0; i < 4; i++)
+        jf(s, "%s\"%s\":{\"level\":%u,\"edges\":%u,\"lowPasses\":%u,\"stable\":%u}", i ? "," : "", names[i],
+           s_pinLevel[i], (unsigned)s_pinEdges[i], (unsigned)s_pinLowMs[i], buttons[i].lastStable);
+    s += "}";
+    thReply(id, s);
+}
+
 void th_setup() {
     Serial.setTxBufferSize(4096);
     Serial.setRxBufferSize(1024);
@@ -709,6 +774,7 @@ void th_setup() {
 }
 
 void th_poll() {
+    thPollPins();
     static char line[256];
     static size_t len = 0;
     for (int guard = 0; guard < 256 && Serial.available(); guard++) {

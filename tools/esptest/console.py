@@ -127,7 +127,7 @@ class Console:
     # ------------------------------------------------------------ команды
     _IDEMPOTENT = {"ping", "state", "stats", "screen", "eeprom", "seqdump", "songdump", "load", "rxlog", "fs",
                    "set", "param", "step", "render", "nvs", "prof", "txlog",
-                   "press", "release", "virt", "fresh", "reload"}
+                   "press", "release", "virt", "fresh", "reload", "nvsraw", "pins"}
 
     def cmd(self, name: str, *args, timeout: float | None = None) -> dict:
         # USB-CDC изредка теряет обмен (~1 из 15 при плотной серии команд; устройство при этом
