@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 tools/.venv/
 tools/results/
+dist/
