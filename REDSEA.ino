@@ -1236,6 +1236,20 @@ void handleIncomingCC(uint8_t cc, uint8_t val) {
   state.displayDirty = true;
 }
 
+// Расписания движков (капли RAIN, повторы RFLCT, заморозки SNOW) хранят абсолютные номера
+// тактов. Start обнуляет счётчик тактов — переносим их к новому нулю, сохраняя оставшееся
+// время; иначе движок ждал бы, пока счётчик дорастёт до номера из прошлого прогона.
+void rebaseTickSchedules(uint32_t oldTicks) {
+  auto rebase = [oldTicks](uint32_t& t) { t = (t > oldTicks) ? t - oldTicks : 0; };
+  for (uint8_t i = 0; i < NUM_PARAMS; i++) {
+    rebase(state.rainNextTick[i]);
+    rebase(state.sunReflectNextTick[i]);
+  }
+  for (uint8_t t = 0; t < SNOW_FREEZE_TARGETS; t++) rebase(state.snowFreezeUntilTick[t]);
+  rebase(state.snowLastStepTick);
+  rebase(state.lastNoteOnTick);
+}
+
 void processMIDI() {
 #ifdef REDSEA_TEST
   th_serviceMark();
@@ -1257,6 +1271,7 @@ void processMIDI() {
         case 0xF8: processExternalClockTick(); break;
         case 0xFA:
           state.midiRunning = true;
+          rebaseTickSchedules(state.midiTicks);
           state.midiTicks = 0; state.beatCounter = 0; state.barCounter = 0;
           state.lastClockMicros = 0; state.clockAccumulator = 0; state.clockCount = 0; state.bpmSmooth = 0;
           state.sequencerRunning = true;
