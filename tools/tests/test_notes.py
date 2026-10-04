@@ -70,22 +70,30 @@ def test_stop_releases_note_and_sends_all_notes_off(rs, midi, rec):
 
 @pytest.mark.tid("В1", "P1")
 def test_bypass_releases_note(rs, rec):
-    """Вход в BYPASS гасит звучащую ноту до того, как выход заглушится."""
-    pattern(rs, [60, None, None, None], steps=4)
-    rs.set(bpm=60, bypsel=1)   # BYPASS
+    """Вход в BYPASS гасит звучащую ноту до того, как выход заглушится; после выхода нет
+    Note Off нотам, которые за время BYPASS на выход не уходили."""
+    pattern(rs, [60, 62, 64, 65], steps=4)
+    rs.set(bpm=60, bypsel=1)   # BYPASS; шаг — 250 мс
     rs.page("main")
     rs.txlog_clear()
     rs.double("tap")
-    time.sleep(0.3)            # шаг 1 прозвучал, следующий — через 250 мс при 60 BPM
+    time.sleep(0.15)           # шаг 1 прозвучал
     rs.click("play")           # вход в BYPASS
-    time.sleep(0.2)
+    time.sleep(0.8)            # за это время проходят шаги — заглушённые
     rs.click("play")           # выход
+    time.sleep(0.6)
     rs.double("tap")
     ev = events(rs.txlog())
     rec("события", ev)
-    first_off = next((i for i, e in enumerate(ev) if e[1] == "off" and e[2] == 60), None)
     assert ev and ev[0][1:3] == ("on", 60), f"нота не прозвучала: {ev}"
-    assert first_off == 1, f"при входе в BYPASS Note Off не отправлен: {ev}"
+    assert ev[1][1:3] == ("off", 60), f"при входе в BYPASS Note Off не отправлен: {ev}"
+    sounding, stray = set(), []
+    for e in ev:
+        if e[1] == "on": sounding.add(e[2])
+        elif e[1] == "off":
+            if e[2] not in sounding: stray.append(e)
+            sounding.discard(e[2])
+    assert not stray, f"Note Off нотам, которые не звучали: {stray}"
 
 
 @pytest.mark.tid("В1", "P1")
