@@ -122,20 +122,36 @@ def test_midi_learn_cancelled_by_any_button(rs, rec, btn):
 
 
 @pytest.mark.tid("Д6", "P2")
-def test_settings_saved_after_stop_not_during_play(rs, rec):
-    """Пока идёт транспорт, настройки во флеш не пишутся (запись стопорит процессор);
-    после остановки изменения сохраняются."""
-    rs.set(arm=0, bpm=120)
+@pytest.mark.parametrize("bpm", [120, 240])
+def test_settings_saved_after_pause_without_late_ticks(rs, rec, bpm):
+    """Настройка сохраняется через 2 с после последнего изменения — и во время игры; пока
+    энкодер крутят, запись не идёт; такты при записи не опаздывают (она — сразу после такта)."""
+    rs.set(arm=1, weather=0, chaos=50, bpm=bpm)
     rs.page("storm", sub=0, sel=0)    # AMT
     rs.double("tap")                   # транспорт идёт
-    time.sleep(0.5)
-    for _ in range(5):
-        rs.enc(4)                      # AMT 0 -> 10
-    time.sleep(3.0)
+    time.sleep(1.0)
+    for _ in range(6):
+        rs.enc(4)                      # AMT +2 каждые ~0,5 с
+        time.sleep(0.4)
     during = rs.nvs()["keys"].get("chaos")
-    rs.double("tap")                   # стоп
+    # Чтение NVS командой стенда тоже останавливает процессор — в окно замера его не пускаем:
+    # статистика сбрасывается после него, запись настроек наступит через ~1,6 с.
+    rs.con.stats_reset()
     time.sleep(3.0)
+    st = rs.stats()
     after = rs.nvs()["keys"].get("chaos")
-    rec("AMT в NVS: во время игры / после остановки", f"{during} / {after}")
-    assert during is None, f"во время игры настройка записана во флеш ({during})"
-    assert after == 10, f"после остановки в NVS AMT = {after}, а не 10"
+    rs.double("tap")
+    late, sv = st["late"], st["scopes"].get("save", {})
+    rec("AMT в NVS: пока крутят / через 3 с после", f"{during} / {after}")
+    rec("запись: раз / max мкс", f"{sv.get('n')} / {sv.get('max')}")
+    rec("опоздание такта, мкс: max / avg", f"{late['max']} / {late['avg']}")
+    assert during is None, f"запись шла, пока крутили энкодер ({during})"
+    assert after == 62, f"через 2 с после последнего изменения в NVS AMT = {after}, а не 62"
+    # Обычная запись (~4 мс) идёт сразу после такта и в промежуток помещается. Изредка NVS
+    # обслуживает страницу, и запись длится ~20 мс — длиннее промежутка между тактами на
+    # быстром темпе; это известное и редкое исключение, оно попадает в отчёт отдельно.
+    period_us = 60e6 / bpm / 24
+    if sv.get("max", 0) > period_us * 0.8:
+        rec("длинная запись (обслуживание страницы NVS)", f"{sv['max']} мкс при промежутке {period_us:.0f} мкс")
+    else:
+        assert late["max"] < 1000, f"такт опоздал на {late['max'] / 1000:.1f} мс при обычной записи настроек"

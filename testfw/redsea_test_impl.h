@@ -570,6 +570,38 @@ static void cmdI2cBg(uint32_t id) {
 
 static void cmdPins(uint32_t id, const char* a1);
 
+// savetest <n> <режим> — n настоящих записей во флеш (пространство NVS "rstest", настройки
+// RED SEA не затрагиваются) с паузой ~300 мс, пока идёт транспорт. Режим 0 — запись в
+// произвольный момент, 1 — сразу после очередного такта. Опоздание тактов — в stats.late.
+// Команда сама отпускает блокировку движка между записями, иначе такты стояли бы всё время.
+static void cmdSaveTest(uint32_t id, const char* an, const char* am) {
+    int n = an ? atoi(an) : 20, mode = am ? atoi(am) : 0;
+    static uint32_t counter = 0;
+    uint32_t sum = 0, mx = 0;
+    engineUnlock();
+    for (int k = 0; k < n; k++) {
+        vTaskDelay(pdMS_TO_TICKS(200 + (esp_random() % 200)));
+        if (mode == 1) {
+            uint32_t t = state.midiTicks;
+            while (state.midiTicks == t) taskYIELD();
+        }
+        engineLock();
+        uint32_t t0 = micros();
+        Preferences p;
+        p.begin("rstest", false);
+        p.putUInt("x", ++counter);
+        p.end();
+        uint32_t d = micros() - t0;
+        engineUnlock();
+        sum += d;
+        if (d > mx) mx = d;
+    }
+    engineLock();
+    String s;
+    jf(s, "{\"n\":%d,\"avg\":%u,\"max\":%u}", n, (unsigned)(n ? sum / n : 0), (unsigned)mx);
+    thReply(id, s);
+}
+
 // nvsraw — физическое состояние раздела NVS прямо с флеша. Страница NVS = сектор 4 КБ:
 // заголовок (состояние, порядковый номер), битовая карта на 126 записей по 2 бита
 // (11 — пустая, 10 — записана, 00 — удалена), затем сами записи по 32 байта.
@@ -684,6 +716,18 @@ static void execLine(char* line) {
     if (!strcmp(cmd, "i2cbg")) return cmdI2cBg(id);
     if (!strcmp(cmd, "pins")) return cmdPins(id, a[0]);
     if (!strcmp(cmd, "nvsraw")) return cmdNvsRaw(id);
+#ifdef REDSEA_ENGINE_TASK
+    if (!strcmp(cmd, "sig")) {
+        String s;
+        jf(s, "{\"set\":%u,\"seq\":%u,\"last\":%u,\"saved\":%u,\"since\":%u}", (unsigned)settingsSignature(),
+           (unsigned)sequencerSignature(), (unsigned)saveState.lastSig, (unsigned)saveState.savedSig,
+           (unsigned)(millis() - saveState.lastChangeMs));
+        return thReply(id, s);
+    }
+#endif
+#ifdef REDSEA_ENGINE_TASK
+    if (!strcmp(cmd, "savetest")) return cmdSaveTest(id, a[0], a[1]);
+#endif
     if (!strcmp(cmd, "rxlog")) return cmdRxlog(id, a[0]);
     if (!strcmp(cmd, "txlog")) return cmdTxlog(id, a[0]);
     if (!strcmp(cmd, "nvs")) return cmdNvs(id);
@@ -711,6 +755,9 @@ static void execLine(char* line) {
         while (midi.available()) midi.read();
         loadSettings();
         for (uint8_t i = 0; i < 8; i++) state.frozenBackup[i] = getSnowTargetFrozen(i);
+#ifdef REDSEA_ENGINE_TASK
+        saveState = SaveState();  // NVS изменён в обход прошивки — её «сохранённое состояние» не в счёт
+#endif
         s_txHead = s_txCount = 0;
         s_txTotal = 0;
         s_rxHead = s_rxCount = 0;
