@@ -179,8 +179,7 @@ def test_external_clock_without_start_plus_tap(rs, midi, rec):
     assert abs(rate - 48) < 2.5, f"счётчик тактов идёт со скоростью {rate:.1f}/с вместо 48/с"
 
 
-@pytest.mark.tid("В1", "P2")
-@pytest.mark.design
+@pytest.mark.tid("В1", "P1")
 def test_sequencer_notes_are_released(rs, rec):
     """Каждая нота секвенсора получает Note Off (к следующему шагу или по Stop)."""
     rs.clear_steps()
@@ -205,7 +204,6 @@ def test_sequencer_notes_are_released(rs, rec):
 
 
 @pytest.mark.tid("В4", "P2")
-@pytest.mark.design
 def test_fog_single_cc_per_tick(rs, midi, rec):
     """FOG: на такте — одно значение на параметр (без случайного выброса перед значением LFO)."""
     rs.set(weather=0, chaos=60, wav=0, arm=1)
@@ -224,3 +222,19 @@ def test_fog_single_cc_per_tick(rs, midi, rec):
     rec("тактов с двумя CC на параметр", len({k[0] for k in dup}))
     rec("пример", list(dup.items())[:3])
     assert not dup, f"на {len({k[0] for k in dup})} тактах из 24 параметр получил два CC подряд"
+
+
+@pytest.mark.tid("В5", "P2")
+def test_fog_lfo_sends_only_changes(rs, midi, rec):
+    """FOG: LFO отправляет CC только когда значение изменилось (AMT 0 — значение постоянно)."""
+    rs.set(weather=0, chaos=0, wav=2, arm=1)
+    for i in range(4):
+        rs.param(i, cc=20 + i, value=64)
+    rs.txlog_clear()
+    midi.start()
+    send_clocks(midi, 48, 0.02)
+    midi.stop()
+    time.sleep(0.2)
+    cc = [m for m in rs.txlog() if m.kind == "cc" and 20 <= m.d1 <= 23]
+    rec("CC за 48 тактов при постоянном значении", len(cc))
+    assert len(cc) <= 4, f"за 48 тактов отправлено {len(cc)} CC с неизменным значением"

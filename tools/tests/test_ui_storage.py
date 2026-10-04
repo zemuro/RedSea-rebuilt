@@ -6,7 +6,7 @@ import pytest
 
 @pytest.mark.tid("Д1", "P1")
 def test_bpm_above_255(rs, rec):
-    """BPM на подстранице setup: от 250 энкодером вверх — значение растёт, а не обнуляется."""
+    """BPM на подстранице setup: от 250 энкодером вверх растёт до 300 и сохраняется."""
     rs.page("seq", sub=1, sel=0)
     rs.set(bpm=250)
     seen = []
@@ -14,7 +14,17 @@ def test_bpm_above_255(rs, rec):
         rs.enc(4)
         seen.append(rs.state()["clk"]["bpmInt"])
     rec("BPM после каждого щелчка от 250", seen)
-    assert all(b >= 250 for b in seen), f"BPM после 250: {seen}"
+    assert seen == list(range(251, 259)), f"BPM после 250: {seen}"
+    time.sleep(5.5)  # секвенсор сохраняется раз в 5 с
+    saved = rs.nvs()["keys"].get("seqBPM16")
+    rec("BPM в NVS", saved)
+    assert saved == 258, f"в NVS сохранён темп {saved}, а не 258"
+    rs.set(bpm=298)
+    for _ in range(4):
+        rs.enc(4)
+    top = rs.state()["clk"]["bpmInt"]
+    rec("BPM от 298 после 4 щелчков", top)
+    assert top == 300, f"верхний предел — {top}, а не 300"
 
 
 @pytest.mark.tid("Д7", "P1")
@@ -38,7 +48,7 @@ def test_cc_numbers_survive_reboot_after_randomize(rs, rec):
     time.sleep(3.0)  # запись по таймеру раз в 2 с
     keys = rs.nvs()["keys"]
     saved = [keys.get(f"cc{i}") for i in range(4)]
-    rs.con.reboot()
+    rs.reload()
     after = [p[0] for p in rs.state()["p"]]
     rec("CC после рандомизации", before)
     rec("CC в NVS", saved)
@@ -93,17 +103,19 @@ def test_animation_time_after_freeze(rs, rec):
     rec("после 1-го и 2-го выхода, мс", times)
     assert times[1] < 2 ** 31, f"после второго выхода время анимации {times[1]} — ушло «в минус»"
     assert times[0] >= t0, f"после выхода время анимации {times[0]} мс < {t0} мс до паузы (анимация начинается заново)"
+    assert times[1] >= times[0], f"после второго выхода время анимации {times[1]} < {times[0]}"
 
 
 @pytest.mark.tid("В7", "P2")
-@pytest.mark.design
-def test_midi_learn_cancelled_by_tap(rs, rec):
-    """MANUAL: любая кнопка отменяет ожидание MIDI Learn — проверяем TAP."""
+@pytest.mark.parametrize("btn", ["tap", "play"])
+def test_midi_learn_cancelled_by_any_button(rs, rec, btn):
+    """Любая кнопка отменяет ожидание MIDI Learn (MANUAL); PLAY при этом не включает BYPASS/FREEZE."""
     rs.page("cc", sub=0, sel=0)
     for _ in range(3):
         rs.click("enc", 0.05)
     assert rs.state()["learn"], "тройной клик не включил MIDI Learn"
-    rs.click("tap")
-    learn = rs.state()["learn"]
-    rec("ожидание MIDI Learn после TAP", learn)
-    assert not learn, "TAP не отменил ожидание MIDI Learn"
+    rs.click(btn)
+    st = rs.state()
+    rec(f"ожидание MIDI Learn после {btn.upper()} / режим", f"{st['learn']} / {st['bypass']}")
+    assert not st["learn"], f"{btn.upper()} не отменил ожидание MIDI Learn"
+    assert st["bypass"] == 0, "отмена MIDI Learn кнопкой PLAY заодно включила BYPASS/FREEZE"

@@ -49,6 +49,12 @@ class RedSea:
         self.con.cmd("fresh", timeout=8)
         time.sleep(0.2)
 
+    def reload(self):
+        """«Выключить и включить»: состояние с нуля и настройки из NVS (NVS не стирается).
+        Без перезагрузки — проверяет то же, что увидит пользователь после включения."""
+        self.con.cmd("reload", timeout=8)
+        time.sleep(0.2)
+
     def set(self, **kw):
         for k, v in kw.items():
             self.con.cmd("set", k, int(v))

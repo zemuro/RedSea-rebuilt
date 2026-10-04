@@ -428,6 +428,7 @@ static void cmdNvs(uint32_t id) {
             jf(s, "%s\"%s\":%u", first ? "" : ",", k, p.getUChar(k, 0));
             first = false;
         }
+        if (p.isKey("seqBPM16")) jf(s, "%s\"seqBPM16\":%u", first ? "" : ",", p.getUShort("seqBPM16", 0));
         p.end();
     }
     s += "}}";
@@ -650,15 +651,19 @@ static void execLine(char* line) {
     if (!strcmp(cmd, "rxlog")) return cmdRxlog(id, a[0]);
     if (!strcmp(cmd, "txlog")) return cmdTxlog(id, a[0]);
     if (!strcmp(cmd, "nvs")) return cmdNvs(id);
-    if (!strcmp(cmd, "fresh")) {
-        // «Как после стирания и включения», но без перезагрузки: переподключение USB при
-        // перезагрузке иногда роняет pyserial на Windows. Состояние — начальные значения
-        // State, затем loadSettings() из пустого NVS, как в setup().
+    if (!strcmp(cmd, "fresh") || !strcmp(cmd, "reload")) {
+        // fresh — «как после стирания и включения», reload — «как после включения» (NVS не
+        // трогаем). Без перезагрузки: переподключение USB при перезагрузке иногда роняет
+        // pyserial на Windows. Состояние — начальные значения State, затем loadSettings(),
+        // как в setup().
+        bool wipe = !strcmp(cmd, "fresh");
         thDisplaySync();
-        Preferences p;
-        p.begin("redsea", false);
-        p.clear();
-        p.end();
+        if (wipe) {
+            Preferences p;
+            p.begin("redsea", false);
+            p.clear();
+            p.end();
+        }
         state = State();
         lastInternalTickMicros = 0;
         midiRunningStatus = 0;
