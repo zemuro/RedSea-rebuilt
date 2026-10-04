@@ -71,6 +71,7 @@ class Console:
     _lock: threading.Lock = field(default_factory=threading.Lock)
     _next_id: int = 1
     _stop: bool = False
+    lost: int = 0          # потерянных обменов (повторённых)
 
     # ------------------------------------------------------------ соединение
     def open(self):
@@ -125,15 +126,24 @@ class Console:
 
     # ------------------------------------------------------------ команды
     _IDEMPOTENT = {"ping", "state", "stats", "screen", "eeprom", "seqdump", "songdump", "load", "rxlog", "fs",
-                   "set", "param", "step", "render", "nvs", "prof", "txlog"}
+                   "set", "param", "step", "render", "nvs", "prof", "txlog",
+                   "press", "release", "virt", "fresh", "reload"}
 
     def cmd(self, name: str, *args, timeout: float | None = None) -> dict:
-        try:
+        # USB-CDC изредка теряет обмен (~1 из 15 при плотной серии команд; устройство при этом
+        # живо). Идемпотентные команды повторяем до трёх раз с коротким тайм-аутом.
+        if name not in self._IDEMPOTENT:
             return self._cmd(name, *args, timeout=timeout)
-        except DeviceError as e:
-            if name in self._IDEMPOTENT and "нет ответа" in str(e):
-                return self._cmd(name, *args, timeout=timeout)   # один повтор при потерянном ответе
-            raise
+        last = None
+        for _ in range(3):
+            try:
+                return self._cmd(name, *args, timeout=timeout or 2.0)
+            except DeviceError as e:
+                if "нет ответа" not in str(e):
+                    raise
+                last = e
+                self.lost += 1
+        raise last
 
     def _cmd(self, name: str, *args, timeout: float | None = None) -> dict:
         with self._lock:
